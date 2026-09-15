@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Анализатор метрик Холстеда</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+    textarea { width: 100%; height: 200px; font-family: monospace; box-sizing: border-box; }
+    table { width: 100%; border-collapse: collapse; background: white; margin-top: 10px; }
+    th, td { border: 1px solid #ccc; padding: 6px; text-align: center; }
+    th { background: #eee; }
+    .metrics-panel { background: white; padding: 15px; margin-top: 15px; border: 1px solid #ccc; }
+    button { padding: 10px 20px; background: #4CAF50; color: white; border: none; cursor: pointer; font-size: 14px; }
+    button:hover { background: #45a049; }
+  </style>
+</head>
+<body>
+  <h2>Анализатор метрик Холстеда</h2>
+  <textarea id="codeInput" placeholder="Вставьте код TypeScript..."></textarea><br><br>
+  <button id="analyzeBtn">Рассчитать метрики</button>
+
+  <h3>Таблица базовых метрик</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>№ (j / i)</th>
+        <th>Оператор</th>
+        <th>f1j</th>
+        <th>Операнд</th>
+        <th>f2i</th>
+      </tr>
+    </thead>
+    <tbody id="resultTableBody"></tbody>
+    <tfoot id="resultTableFoot"></tfoot>
+  </table>
+
+  <div class="metrics-panel">
+    <h3>Расширенные метрики Холстеда</h3>
+    <p id="lblEta">Словарь программы (η = η1 + η2): -</p>
+    <p id="lblN">Длина программы (N = N1 + N2): -</p>
+    <p id="lblV">Объем программы (V = N log2 η): -</p>
+  </div>
+
+  <script>
+    class HalsteadParser {
+      constructor() {
+        this.operatorsKeywords = new Set([
+          'if', 'else', 'for', 'while', 'return', 'function', 'let', 'const', 'var',
+          'interface', 'type', 'import', 'export', 'void', 'number', 'string', 'boolean'
+        ]);
+        this.multiCharOps = [
+          '===', '!==', '==', '!=', '<=', '>=', '&&', '||', '++', '--', '=>', '+=', '-='
+        ];
+        this.singleCharOps = new Set([
+          '+', '-', '*', '/', '%', '=', '<', '>', '!', ':', ';', ',', '.', '(', ')', '[', ']', '{', '}'
+        ]);
+      }
+
+      analyze(code) {
+        const cleanCode = code.replace(/\/\/.*|\/\*[\s\S]*?\*\//g, '');
+        const operatorsMap = new Map();
+        const operandsMap = new Map();
+
+        const funcCallRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
+        let match;
+        const calledFunctions = new Set();
+
+        while ((match = funcCallRegex.exec(cleanCode)) !== null) {
+          const funcName = match[1];
+          if (!this.operatorsKeywords.has(funcName)) {
+            const opName = `${funcName}()`;
+            operatorsMap.set(opName, (operatorsMap.get(opName) || 0) + 1);
+            calledFunctions.add(funcName);
+          }
+        }
+
+        const tokenRegex = /"[^"]*"|'[^']*'|`[^`]*`|\b\d+(\.\d+)?\b|\b[a-zA-Z_$][a-zA-Z0-9_$]*\b|===|!==|==|!=|<=|>=|&&|\|\||\+\+|--|=>|\+=|-=|.|\n/g;
+        let tokens = cleanCode.match(tokenRegex) || [];
+
+        for (let i = 0; i < tokens.length; i++) {
+          const token = tokens[i].trim();
+          if (!token) continue;
+
+          if (i + 1 < tokens.length && tokens[i + 1] === '(' && calledFunctions.has(token)) {
+            continue;
+          }
+
+          if (this.operatorsKeywords.has(token) || this.multiCharOps.includes(token) || this.singleCharOps.has(token)) {
+            if (token === '(' && i > 0 && calledFunctions.has(tokens[i - 1])) {
+              continue;
+            }
+            operatorsMap.set(token, (operatorsMap.get(token) || 0) + 1);
+          } else {
+            operandsMap.set(token, (operandsMap.get(token) || 0) + 1);
+          }
+        }
+
+        const eta1 = operatorsMap.size;
+        const eta2 = operandsMap.size;
+        const N1 = Array.from(operatorsMap.values()).reduce((a, b) => a + b, 0);
+        const N2 = Array.from(operandsMap.values()).reduce((a, b) => a + b, 0);
+
+        const sortedOperators = Array.from(operatorsMap.entries()).sort((a, b) => b[1] - a[1]);
+        const sortedOperands = Array.from(operandsMap.entries()).sort((a, b) => b[1] - a[1]);
+
+        const maxRows = Math.max(sortedOperators.length, sortedOperands.length);
+        const tableData = [];
+
+        for (let i = 0; i < maxRows; i++) {
+          tableData.push({
+            j_i: i + 1,
+            operator: sortedOperators[i] ? sortedOperators[i][0] : '',
+            f1j: sortedOperators[i] ? sortedOperators[i][1] : '',
+            operand: sortedOperands[i] ? sortedOperands[i][0] : '',
+            f2i: sortedOperands[i] ? sortedOperands[i][1] : ''
+          });
+        }
+
+        const eta = eta1 + eta2;
+        const N = N1 + N2;
+        const V = eta > 0 ? N * Math.log2(eta) : 0;
+
+        return { tableData, eta1, eta2, N1, N2, eta, N, V };
+      }
+    }
+
+    // Привязка обработчиков событий к интерфейсу
+    document.getElementById('analyzeBtn').addEventListener('click', () => {
+      const code = document.getElementById('codeInput').value;
+      if (!code.trim()) {
+        alert('Введите код для анализа!');
+        return;
+      }
+
+      const parser = new HalsteadParser();
+      const result = parser.analyze(code);
+
+      // Заполнение таблицы
+      const tbody = document.getElementById('resultTableBody');
+      const tfoot = document.getElementById('resultTableFoot');
+      tbody.innerHTML = '';
+      tfoot.innerHTML = '';
+
+      result.tableData.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${row.j_i}</td>
+          <td>${row.operator}</td>
+          <td>${row.f1j}</td>
+          <td>${row.operand}</td>
+          <td>${row.f2i}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      // Итоговая строка
+      tfoot.innerHTML = `
+        <tr style="font-weight: bold; background: #f0f0f0;">
+          <td>ИТОГО</td>
+          <td>η1 = ${result.eta1}</td>
+          <td>N1 = ${result.N1}</td>
+          <td>η2 = ${result.eta2}</td>
+          <td>N2 = ${result.N2}</td>
+        </tr>
+      `;
+
+      // Расширенные метрики
+      document.getElementById('lblEta').innerText = `Словарь программы (η = η1 + η2): ${result.eta}`;
+      document.getElementById('lblN').innerText = `Длина программы (N = N1 + N2): ${result.N}`;
+      document.getElementById('lblV').innerText = `Объем программы (V = N log2 η): ${result.V.toFixed(2)} бит`;
+    });
+  </script>
+</body>
+</html>
